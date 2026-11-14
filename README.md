@@ -121,13 +121,29 @@ git push origin v7.6.0
 Publishing also runs when a GitHub Release is published. A release created from an existing tag is
 safe to re-run because both push steps use `--skip-duplicate`.
 
-Before publishing, configure the repository secret `NUGET_API_KEY` with a nuget.org API key that has
-push permissions. The workflow:
+Publishing uses [NuGet Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing):
+the workflow requests a GitHub OIDC token and exchanges it for a short-lived nuget.org API key, so no
+long-lived API key is stored in the repository.
+
+One-time setup:
+
+1. On nuget.org, open **Trusted Publishing** and add a policy:
+   - **Repository Owner**: `dmostert`
+   - **Repository**: `Mossie.Incus.Client`
+   - **Workflow File**: `publish.yml` (file name only, not the full path)
+   - **Environment**: leave empty, unless the workflow job is given an `environment:` — in that case
+     the policy must use the same name.
+2. Add the repository secret `NUGET_USER` with your nuget.org profile name (not your email address).
+   This identifies the account that requests the temporary key; no API key secret is needed.
+3. Keep `id-token: write` in the workflow permissions so GitHub can issue the OIDC token.
+
+The workflow:
 
 1. Derives the package version from the tag (`v7.6.1` → `7.6.1`) or from a manual dispatch input.
 2. Restores, builds and runs the test suite.
 3. Packs the `.nupkg` and `.snupkg` into `artifacts/packages`.
-4. Pushes both packages to nuget.org with `dotnet nuget push --skip-duplicate`.
+4. Exchanges the OIDC token for a temporary API key with `NuGet/login@v1` (valid for one hour) and
+   pushes both packages with `dotnet nuget push --skip-duplicate`.
 
 Manual runs of the workflow can specify a version and enable `dry_run` to build and pack without
 publishing. Build artifacts are uploaded to the workflow run.
