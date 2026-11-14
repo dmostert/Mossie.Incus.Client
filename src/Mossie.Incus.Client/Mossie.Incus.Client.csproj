@@ -14,8 +14,8 @@
     <PackageTags>incus;lxd;lxc;containers;virtualization;client;api</PackageTags>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <RepositoryType>git</RepositoryType>
-    <RepositoryUrl>https://github.com/mossie/Mossie.Incus.Client</RepositoryUrl>
-    <PackageProjectUrl>https://github.com/mossie/Mossie.Incus.Client</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/dmostert/Mossie.Incus.Client</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/dmostert/Mossie.Incus.Client</PackageProjectUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>

@@ -1,0 +1,148 @@
+name: Publish NuGet package
+
+on:
+  push:
+    tags:
+      - "v*"
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Package version, for example 7.6.0 or 7.6.1-beta.1"
+        required: true
+        type: string
+      dry_run:
+        description: "Build and pack only; do not push to NuGet.org"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nuget-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Test, pack and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+          cache: true
+          cache-dependency-path: |
+            src/**/*.csproj
+            tests/**/*.csproj
+
+      - name: Determine package version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid package version '${VERSION}'. Expected a semantic version such as 7.6.0 or 7.6.1-beta.1."
+            exit 1
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Publishing version ${VERSION}"
+
+      - name: Restore
+        run: dotnet restore Mossie.Incus.Client.slnx
+
+      - name: Build
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+        run: >
+          dotnet build Mossie.Incus.Client.slnx
+          --configuration Release
+          --no-restore
+          -p:Version="$PACKAGE_VERSION"
+
+      - name: Test
+        run: >
+          dotnet test Mossie.Incus.Client.slnx
+          --configuration Release
+          --no-build
+          --logger "trx;LogFileName=test-results.trx"
+          --results-directory artifacts/test-results
+
+      - name: Pack
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+        run: >
+          dotnet pack src/Mossie.Incus.Client/Mossie.Incus.Client.csproj
+          --configuration Release
+          --no-build
+          -p:Version="$PACKAGE_VERSION"
+          --output artifacts/packages
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: |
+            artifacts/packages/*
+            artifacts/test-results/*
+          if-no-files-found: error
+
+      - name: Verify NuGet API key
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != true }}
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [[ -z "${NUGET_API_KEY}" ]]; then
+            echo "::error::The NUGET_API_KEY repository secret is not configured."
+            exit 1
+          fi
+
+      - name: Push package to NuGet.org
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != true }}
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for package in artifacts/packages/*.nupkg; do
+            dotnet nuget push "$package" \
+              --api-key "$NUGET_API_KEY" \
+              --source https://api.nuget.org/v3/index.json \
+              --skip-duplicate \
+              --no-symbols
+          done
+
+      - name: Push symbol package to NuGet.org
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != true }}
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for symbols in artifacts/packages/*.snupkg; do
+            dotnet nuget push "$symbols" \
+              --api-key "$NUGET_API_KEY" \
+              --source https://api.nuget.org/v3/index.json \
+              --skip-duplicate
+          done

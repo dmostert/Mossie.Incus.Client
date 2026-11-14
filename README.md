@@ -1,5 +1,7 @@
 # Mossie.Incus.Client
 
+[![CI](https://github.com/dmostert/Mossie.Incus.Client/actions/workflows/ci.yml/badge.svg)](https://github.com/dmostert/Mossie.Incus.Client/actions/workflows/ci.yml)
+
 A C# / .NET client for the [Incus](https://linuxcontainers.org/incus/) REST API, translated from the
 official Go client (`github.com/lxc/incus/v7/client`) and API models (`github.com/lxc/incus/v7/shared/api`).
 
@@ -106,6 +108,29 @@ dotnet test Mossie.Incus.Client.slnx
 The test project covers JSON serialization/deserialization of generated models, RFC 3339 date
 handling, `Writable()`/`ToPut` helpers, architecture mapping, constants and error types, plus an
 end-to-end SimpleStreams metadata parse and image download against an in-process HTTP server.
+
+## Publishing
+
+The [`Publish NuGet package`](.github/workflows/publish.yml) workflow publishes tagged releases:
+
+```bash
+git tag v7.6.0
+git push origin v7.6.0
+```
+
+Publishing also runs when a GitHub Release is published. A release created from an existing tag is
+safe to re-run because both push steps use `--skip-duplicate`.
+
+Before publishing, configure the repository secret `NUGET_API_KEY` with a nuget.org API key that has
+push permissions. The workflow:
+
+1. Derives the package version from the tag (`v7.6.1` → `7.6.1`) or from a manual dispatch input.
+2. Restores, builds and runs the test suite.
+3. Packs the `.nupkg` and `.snupkg` into `artifacts/packages`.
+4. Pushes both packages to nuget.org with `dotnet nuget push --skip-duplicate`.
+
+Manual runs of the workflow can specify a version and enable `dry_run` to build and pack without
+publishing. Build artifacts are uploaded to the workflow run.
 
 ## License
 
