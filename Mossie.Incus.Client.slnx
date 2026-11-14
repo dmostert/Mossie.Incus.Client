@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/Mossie.Incus.Client/Mossie.Incus.Client.csproj" />
+  <Project Path="tests/Mossie.Incus.Client.Tests/Mossie.Incus.Client.Tests.csproj" />
+</Solution>

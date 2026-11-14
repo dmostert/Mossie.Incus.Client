@@ -1,0 +1,90 @@
+{
+  "apiTypes": {
+    "total": 238,
+    "checkedStructs": 227,
+    "missingTypes": [
+      {
+        "type": "MetadataConfigEntityName",
+        "kind": "defined",
+        "file": "metadata.go"
+      },
+      {
+        "type": "MetadataConfigGroupName",
+        "kind": "defined",
+        "file": "metadata.go"
+      },
+      {
+        "type": "ResponseType",
+        "kind": "defined",
+        "file": "response.go"
+      },
+      {
+        "type": "StatusCode",
+        "kind": "defined",
+        "file": "status_code.go"
+      },
+      {
+        "type": "StatusError",
+        "kind": "struct",
+        "file": "error.go"
+      },
+      {
+        "type": "URL",
+        "kind": "struct",
+        "file": "url.go"
+      }
+    ],
+    "checkedFields": 1182,
+    "missingFields": [],
+    "extraFields": [],
+    "typeMismatches": []
+  },
+  "protocolMethods": {
+    "ProtocolIncus": {
+      "total": 346,
+      "missing": [
+        {
+          "name": "DoHTTP",
+          "file": "incus.go"
+        },
+        {
+          "name": "DoWebsocket",
+          "file": "incus.go"
+        },
+        {
+          "name": "GetOIDCTokens",
+          "file": "incus_oidc.go"
+        },
+        {
+          "name": "GetStoragePoolVolumeFileSFTP",
+          "file": "incus_storage_volumes.go"
+        },
+        {
+          "name": "WithContext",
+          "file": "incus.go"
+        }
+      ],
+      "present": 341
+    },
+    "ProtocolOCI": {
+      "total": 20,
+      "missing": [
+        {
+          "name": "DoHTTP",
+          "file": "oci.go"
+        }
+      ],
+      "present": 19
+    },
+    "ProtocolSimpleStreams": {
+      "total": 20,
+      "missing": [
+        {
+          "name": "DoHTTP",
+          "file": "simplestreams.go"
+        }
+      ],
+      "present": 19
+    }
+  }
+}

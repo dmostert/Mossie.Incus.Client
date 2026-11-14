@@ -1,0 +1,24 @@
+# Build output
+bin/
+obj/
+artifacts/
+*.user
+*.suo
+
+# Test results
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+# Rider / Visual Studio
+.idea/
+.vs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# NuGet
+*.nupkg
+*.snupkg
