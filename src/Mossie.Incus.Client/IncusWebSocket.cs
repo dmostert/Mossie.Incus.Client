@@ -4,12 +4,23 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace Mossie.Incus.Client.Internal;
+namespace Mossie.Incus.Client;
 
 /// <summary>
-/// WebSocket connection wrapper. Because <see cref="System.Net.WebSockets.ClientWebSocket"/> cannot
-/// dial Unix domain sockets, the HTTP Upgrade handshake is performed manually for every transport.
+/// A WebSocket connection to an Incus endpoint.
 /// </summary>
+/// <remarks>
+/// <para>
+/// This is returned by the console, exec, operation and raw-websocket methods. Because
+/// <see cref="System.Net.WebSockets.ClientWebSocket"/> cannot dial Unix domain sockets, the HTTP
+/// Upgrade handshake is performed manually for every transport (HTTPS, TCP and Unix socket).
+/// </para>
+/// <para>
+/// Control handlers (for instance consoles and exec) receive this type so they can both read and
+/// write control messages over the same connection, mirroring the Go client's
+/// <c>func(conn *websocket.Conn)</c> signature.
+/// </para>
+/// </remarks>
 public sealed class IncusWebSocket : IAsyncDisposable
 {
     private static readonly byte[] Crlf = "\r\n"u8.ToArray();
@@ -279,13 +290,20 @@ public sealed class IncusWebSocket : IAsyncDisposable
         }
     }
 
-    internal Task SendTextAsync(string text, CancellationToken cancellationToken)
+    /// <summary>Sends a UTF-8 text message over the connection.</summary>
+    public Task SendTextAsync(string text, CancellationToken cancellationToken = default)
         => _socket.SendAsync(Encoding.UTF8.GetBytes(text), System.Net.WebSockets.WebSocketMessageType.Text, true, cancellationToken);
 
-    internal Task SendBinaryAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
+    /// <summary>Sends a binary message over the connection.</summary>
+    public Task SendBinaryAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default)
         => _socket.SendAsync(data, System.Net.WebSockets.WebSocketMessageType.Binary, true, cancellationToken).AsTask();
 
-    internal async Task<(System.Net.WebSockets.WebSocketMessageType Type, byte[] Data)> ReceiveAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Receives a complete message from the connection. Text and binary messages are reassembled into
+    /// a single buffer; a close message is reported as <see cref="System.Net.WebSockets.WebSocketMessageType.Close"/>
+    /// with an empty payload.
+    /// </summary>
+    public async Task<(System.Net.WebSockets.WebSocketMessageType Type, byte[] Data)> ReceiveAsync(CancellationToken cancellationToken)
     {
         using MemoryStream memory = new();
         byte[] buffer = ArrayPool<byte>.Shared.Rent(16 * 1024);

@@ -117,7 +117,7 @@ public sealed class Operation : IAsyncDisposable
     }
 
     /// <summary>Returns a raw websocket connection for the operation.</summary>
-    public Task<Internal.IncusWebSocket> GetWebSocketAsync(string secret, CancellationToken cancellationToken = default)
+    public Task<IncusWebSocket> GetWebSocketAsync(string secret, CancellationToken cancellationToken = default)
         => _client.GetOperationWebSocketAsync(Id, secret, cancellationToken);
 
     /// <summary>Waits until the operation reaches a final state.</summary>

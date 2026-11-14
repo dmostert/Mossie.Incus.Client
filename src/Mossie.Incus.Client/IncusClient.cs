@@ -34,6 +34,8 @@ public sealed partial class IncusClient : IImageServer, IAsyncDisposable
     private bool _skipEvents;
     private Api.Server? _server;
     private string? _tempPath;
+    private readonly object _oidcLock = new();
+    private OidcTokens? _oidcTokens;
 
     private IncusClient(
         HttpClient http,
@@ -618,12 +620,35 @@ public sealed partial class IncusClient : IImageServer, IAsyncDisposable
         if (_requireAuthenticated)
             request.Headers.TryAddWithoutValidation("X-Incus-authenticated", "true");
 
-        if (_args.OidcTokenProvider is not null)
-        {
-            string? token = await _args.OidcTokenProvider(cancellationToken).ConfigureAwait(false);
-            if (!string.IsNullOrEmpty(token))
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        }
+        OidcTokens? tokens = await GetOidcTokensAsync(cancellationToken).ConfigureAwait(false);
+        if (tokens is null || string.IsNullOrEmpty(tokens.AccessToken))
+            return;
+
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
+
+        // Opaque access tokens can't be verified by the server, so send the ID token alongside.
+        if (!string.IsNullOrEmpty(tokens.IdToken) && tokens.AccessToken.Count(c => c == '.') != 2)
+            request.Headers.TryAddWithoutValidation("X-Incus-OIDC-idtoken", tokens.IdToken);
+    }
+
+    /// <summary>Returns the most recently cached OIDC token set, or <c>null</c> if none has been supplied.</summary>
+    public OidcTokens? GetOIDCTokens()
+    {
+        lock (_oidcLock)
+            return _oidcTokens;
+    }
+
+    private async Task<OidcTokens?> GetOidcTokensAsync(CancellationToken cancellationToken)
+    {
+        if (_args.OidcTokenProvider is null)
+            return null;
+
+        OidcTokens? tokens = await _args.OidcTokenProvider(cancellationToken).ConfigureAwait(false);
+
+        lock (_oidcLock)
+            _oidcTokens = tokens;
+
+        return tokens;
     }
 
     private static async Task<(Api.Response Response, string ETag)> ParseResponseAsync(
@@ -727,9 +752,8 @@ public sealed partial class IncusClient : IImageServer, IAsyncDisposable
 
     internal async Task<IncusWebSocket> RawWebSocketAbsoluteAsync(string url, CancellationToken cancellationToken)
     {
-        string? token = null;
-        if (_args.OidcTokenProvider is not null)
-            token = await _args.OidcTokenProvider(cancellationToken).ConfigureAwait(false);
+        OidcTokens? tokens = await GetOidcTokensAsync(cancellationToken).ConfigureAwait(false);
+        string? token = tokens?.AccessToken;
 
         Uri uri = new(url);
         string pathAndQuery = uri.PathAndQuery;
@@ -753,9 +777,8 @@ public sealed partial class IncusClient : IImageServer, IAsyncDisposable
         object? data,
         CancellationToken cancellationToken)
     {
-        string? token = null;
-        if (_args.OidcTokenProvider is not null)
-            token = await _args.OidcTokenProvider(cancellationToken).ConfigureAwait(false);
+        OidcTokens? tokens = await GetOidcTokensAsync(cancellationToken).ConfigureAwait(false);
+        string? token = tokens?.AccessToken;
 
         string url = BuildQueryUrl(path);
         Uri uri = new(url);

@@ -70,6 +70,11 @@ List<Image> available = await images.GetImagesAsync();
 * Methods returning an ETag use `Task<(T Value, string ETag)>`.
 * Websocket endpoints return `IncusWebSocket`; NBD, SFTP and port-forward endpoints expose the upgraded
   connection as a `System.IO.Stream`.
+* Console and exec control handlers (`InstanceConsoleArgs.Control`, `InstanceExecArgs.Control`) receive
+  an `IncusWebSocket` so they can read and write control messages (window resize, signals, ...), matching
+  the Go `func(conn *websocket.Conn)` callback.
+* OIDC authentication is supplied through `IncusConnectionArgs.OidcTokenProvider`, which returns an
+  `OidcTokens` set; the last set is available via `IncusClient.GetOIDCTokens()`.
 
 ## Verification
 
@@ -84,14 +89,13 @@ Latest result:
 | Struct fields checked | 1,182 |
 | Missing struct fields | 0 |
 | Struct field type mismatches | 0 |
-| `ProtocolIncus` methods present | 341 / 346 |
+| `ProtocolIncus` methods present | 343 / 346 |
 | `ProtocolSimpleStreams` methods present | 19 / 20 |
 | `ProtocolOCI` methods present | 19 / 20 |
 
-The remaining Go methods are transport primitives (`DoHTTP`, `DoWebsocket`), Go context plumbing
-(`WithContext`), OIDC token access (`GetOIDCTokens`), and the Go-specific typed SFTP helper
-(`GetStoragePoolVolumeFileSFTP`). Their C# equivalents are `HttpClient`, `CancellationToken`,
-`IncusWebSocket` and the raw stream returned by `GetStoragePoolVolumeFileSFTPConnAsync`.
+The remaining Go methods are transport primitives (`DoHTTP`, `DoWebsocket`) and Go context plumbing
+(`WithContext`). Their C# equivalents are `HttpClient` / `RawWebSocketAsync` and `CancellationToken`
+parameters.
 
 `ResponseType`, `StatusCode` and `StatusError` are represented by `IncusResponseType`,
 `IncusStatusCode` and `IncusStatusException` respectively.

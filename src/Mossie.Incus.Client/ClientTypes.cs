@@ -229,10 +229,11 @@ public sealed class InstanceConsoleArgs
     public Stream? Terminal { get; set; }
 
     /// <summary>
-    /// Called for every control message received from the server (for example window resize).
-    /// The message is supplied as raw bytes.
+    /// Control-message handler (for example window resize). The handler owns the supplied
+    /// <see cref="IncusWebSocket"/> and runs its own read/write loop, mirroring the Go client's
+    /// <c>func(conn *websocket.Conn)</c> control callback.
     /// </summary>
-    public Action<byte[]>? Control { get; set; }
+    public Func<IncusWebSocket, Task>? Control { get; set; }
 
     /// <summary>Cancel to disconnect from the console.</summary>
     public CancellationToken ConsoleDisconnect { get; set; }
@@ -255,8 +256,12 @@ public sealed class InstanceExecArgs
     /// <summary>Standard error.</summary>
     public Stream? Stderr { get; set; }
 
-    /// <summary>Called for every control message received from the server, as raw bytes.</summary>
-    public Action<byte[]>? Control { get; set; }
+    /// <summary>
+    /// Control-message handler (window resize, signals, ...). The handler owns the supplied
+    /// <see cref="IncusWebSocket"/> and runs its own read/write loop, mirroring the Go client's
+    /// <c>func(conn *websocket.Conn)</c> control callback.
+    /// </summary>
+    public Func<IncusWebSocket, Task>? Control { get; set; }
 
     /// <summary>Signalled when all data operations are done.</summary>
     public TaskCompletionSource? DataDone { get; set; }

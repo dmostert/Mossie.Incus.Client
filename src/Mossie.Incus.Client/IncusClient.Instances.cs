@@ -724,7 +724,7 @@ public sealed partial class IncusClient
             : args.CancellationToken;
 
         if (connections.TryGetValue(SecretNameControl, out IncusWebSocket? control))
-            StartControlLoop(control, args.Control, dataToken);
+            StartControlHandler(control, args.Control);
 
         if (exec.Interactive)
         {
@@ -747,12 +747,18 @@ public sealed partial class IncusClient
                     }
                     finally
                     {
+                        if (control is not null)
+                            await control.DisposeAsync().ConfigureAwait(false);
+
                         args.DataDone?.TrySetResult();
                     }
                 }, CancellationToken.None);
             }
             else
             {
+                if (control is not null)
+                    await control.DisposeAsync().ConfigureAwait(false);
+
                 args.DataDone?.TrySetResult();
             }
         }
@@ -859,22 +865,18 @@ public sealed partial class IncusClient
         return connections;
     }
 
-    private static void StartControlLoop(IncusWebSocket socket, Action<byte[]>? handler, CancellationToken cancellationToken)
+    private static void StartControlHandler(IncusWebSocket socket, Func<IncusWebSocket, Task>? handler)
     {
+        if (handler is null)
+            return;
+
+        // The control handler owns the connection and runs its own read/write loop, matching
+        // the Go client's `go args.Control(controlConn)`.
         _ = Task.Run(async () =>
         {
             try
             {
-                while (!cancellationToken.IsCancellationRequested)
-                {
-                    (System.Net.WebSockets.WebSocketMessageType type, byte[] data) =
-                        await socket.ReceiveAsync(cancellationToken).ConfigureAwait(false);
-
-                    if (type == System.Net.WebSockets.WebSocketMessageType.Close)
-                        break;
-
-                    handler?.Invoke(data);
-                }
+                await handler(socket).ConfigureAwait(false);
             }
             catch
             {
@@ -1539,7 +1541,7 @@ public sealed partial class IncusClient
         IncusWebSocket control = await GetOperationWebSocketAsync(operationInfo.ID, controlSecret, cancellationToken)
             .ConfigureAwait(false);
 
-        StartControlLoop(control, args.Control, cancellationToken);
+        StartControlHandler(control, args.Control);
 
         IncusWebSocket connection = await GetOperationWebSocketAsync(
             operationInfo.ID, fds["0"], cancellationToken).ConfigureAwait(false);
@@ -1608,7 +1610,7 @@ public sealed partial class IncusClient
         IncusWebSocket control = await GetOperationWebSocketAsync(operationInfo.ID, controlSecret, cancellationToken)
             .ConfigureAwait(false);
 
-        StartControlLoop(control, args.Control, cancellationToken);
+        StartControlHandler(control, args.Control);
 
         CancellationToken dataToken = args.ConsoleDisconnect == default
             ? ConnectedToken

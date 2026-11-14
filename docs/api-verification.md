@@ -22,7 +22,7 @@ The verification compares the Go Incus client at tag `v7.6.0` with this C# packa
 | Missing struct fields | **0** |
 | Struct field type mismatches | **0** |
 | Extra struct fields | **0** |
-| `ProtocolIncus` methods | 341 / 346 |
+| `ProtocolIncus` methods | 343 / 346 |
 | `ProtocolSimpleStreams` methods | 19 / 20 |
 | `ProtocolOCI` methods | 19 / 20 |
 
@@ -42,8 +42,6 @@ These are intentional equivalents rather than missing API response data.
 | `ProtocolIncus.DoHTTP` | `IncusClient.GetHttpClient()` | .NET callers send requests through `HttpClient`. |
 | `ProtocolIncus.DoWebsocket` | `IncusClient.RawWebSocketAsync` / `IncusWebSocket` | .NET websocket abstraction. |
 | `ProtocolIncus.WithContext` | `CancellationToken` parameters | Idiomatic .NET cancellation. |
-| `ProtocolIncus.GetOIDCTokens` | not applicable | Exposes Go OIDC client state; authentication is configured through `IncusConnectionArgs`. |
-| `ProtocolIncus.GetStoragePoolVolumeFileSFTP` | `GetStoragePoolVolumeFileSFTPConnAsync` returns a raw `Stream` | No external SFTP dependency; the C# package exposes the protocol stream. |
 | `ProtocolOCI.DoHTTP`, `ProtocolSimpleStreams.DoHTTP` | `GetHttpClient()` | Same as above. |
 
 ## Running the verification

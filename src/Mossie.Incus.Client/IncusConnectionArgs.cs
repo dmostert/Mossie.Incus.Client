@@ -53,10 +53,11 @@ public sealed class IncusConnectionArgs
     public CookieContainer? CookieJar { get; set; }
 
     /// <summary>
-    /// Supplies an OIDC access token. The callback is invoked for each request and may refresh
-    /// the token. This replaces Go's interactive Zitadel device/browser flow.
+    /// Supplies the current OIDC token set. The callback is invoked for each request and may
+    /// refresh the tokens. This replaces Go's interactive Zitadel device/browser flow; the last
+    /// returned token set is cached and exposed via <see cref="IncusClient.GetOIDCTokens"/>.
     /// </summary>
-    public Func<CancellationToken, Task<string?>>? OidcTokenProvider { get; set; }
+    public Func<CancellationToken, Task<OidcTokens?>>? OidcTokenProvider { get; set; }
 
     /// <summary>Do not block for OIDC authentication (kept for API parity).</summary>
     public bool OidcNonInteractive { get; set; }
@@ -90,4 +91,25 @@ public sealed class IncusConnectionArgs
         return new X509Certificate2(cert.Export(X509ContentType.Pkcs12));
 #endif
     }
+}
+
+/// <summary>
+/// A set of OpenID Connect tokens, mirroring the Go <c>oidc.Tokens[*oidc.IDTokenClaims]</c> type.
+/// </summary>
+public sealed class OidcTokens
+{
+    /// <summary>Bearer access token sent in the <c>Authorization</c> header.</summary>
+    public string? AccessToken { get; set; }
+
+    /// <summary>Token type (for example <c>Bearer</c>).</summary>
+    public string? TokenType { get; set; }
+
+    /// <summary>Refresh token, when one was issued by the provider.</summary>
+    public string? RefreshToken { get; set; }
+
+    /// <summary>Expiry of the access token.</summary>
+    public DateTimeOffset? Expiry { get; set; }
+
+    /// <summary>Raw ID token (JWT), sent alongside the access token when it is opaque.</summary>
+    public string? IdToken { get; set; }
 }

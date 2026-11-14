@@ -878,8 +878,8 @@ public sealed partial class IncusClient
         return WrapOperationResponse(response);
     }
 
-    /// <summary>Returns a connection to a storage volume's NBD endpoint.</summary>
-    public async Task<IncusWebSocket> GetStoragePoolVolumeBlockNBDConnAsync(
+    /// <summary>Returns a raw connection to a storage volume's NBD endpoint.</summary>
+    public async Task<Stream> GetStoragePoolVolumeBlockNBDConnAsync(
         string pool,
         string volumeType,
         string volumeName,
@@ -890,13 +890,13 @@ public sealed partial class IncusClient
 
         string path = $"/storage-pools/{Uri.EscapeDataString(pool)}/volumes/{Uri.EscapeDataString(volumeType)}/{Uri.EscapeDataString(volumeName)}/nbd";
         if (args.Writable)
-            path += "?writable=1";
+            path = IncusQuery.SetParameter(path, "writable", "1");
 
-        return await RawWebSocketAsync(path, cancellationToken).ConfigureAwait(false);
+        return await RawConnectionAsync(HttpMethod.Get, path, "nbd", null, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Returns a connection to a storage volume's SFTP endpoint.</summary>
-    public async Task<IncusWebSocket> GetStoragePoolVolumeFileSFTPConnAsync(
+    /// <summary>Returns a raw connection to a storage volume's SFTP endpoint.</summary>
+    public async Task<Stream> GetStoragePoolVolumeFileSFTPConnAsync(
         string pool,
         string volumeType,
         string volumeName,
@@ -905,8 +905,20 @@ public sealed partial class IncusClient
         CheckExtension("custom_volume_sftp");
 
         string path = $"/storage-pools/{Uri.EscapeDataString(pool)}/volumes/{Uri.EscapeDataString(volumeType)}/{Uri.EscapeDataString(volumeName)}/sftp";
-        return await RawWebSocketAsync(path, cancellationToken).ConfigureAwait(false);
+        return await RawConnectionAsync(HttpMethod.Get, path, "sftp", null, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>Returns an SFTP stream for a storage volume.</summary>
+    /// <remarks>
+    /// Unlike the Go client this returns the raw connection rather than a full
+    /// <c>*sftp.Client</c>; the caller supplies its own SFTP framing over the stream.
+    /// </remarks>
+    public Task<Stream> GetStoragePoolVolumeFileSFTPAsync(
+        string pool,
+        string volumeType,
+        string volumeName,
+        CancellationToken cancellationToken = default)
+        => GetStoragePoolVolumeFileSFTPConnAsync(pool, volumeType, volumeName, cancellationToken);
 
     /// <summary>Retrieves the provided path from the storage volume.</summary>
     public async Task<(Stream? Content, InstanceFileResponse Response)> GetStorageVolumeFileAsync(
