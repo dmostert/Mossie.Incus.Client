@@ -1,0 +1,342 @@
+using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+
+namespace Mossie.Incus.Client.Tests;
+
+/// <summary>A minimal fake Incus daemon over a Unix socket: serves HTTP and the events websocket.</summary>
+internal sealed class FakeIncusServer : IAsyncDisposable
+{
+    private readonly string _socketPath;
+    private readonly Socket _listener;
+    private readonly CancellationTokenSource _cts = new();
+    private readonly Task _loop;
+    private readonly List<string> _requests = new();
+    private readonly object _lock = new();
+    private readonly string _operationId = Guid.NewGuid().ToString("N");
+
+    /// <summary>When true, the events websocket never emits the operation completion event.</summary>
+    public bool SuppressOperationEvent { get; set; }
+
+    /// <summary>When true, GET /operations/{id} keeps reporting Running (simulating a slow command).</summary>
+    public bool OperationStaysRunning { get; set; }
+
+    /// <summary>Number of GET /operations/{id} requests to answer with "Running" before "Success".</summary>
+    public int RunningRepliesBeforeSuccess { get; set; }
+
+    private int _operationGets;
+
+    private FakeIncusServer(string socketPath, Socket listener)
+    {
+        _socketPath = socketPath;
+        _listener = listener;
+        _loop = Task.Run(AcceptLoopAsync);
+    }
+
+    public string SocketPath => _socketPath;
+
+    public IReadOnlyList<string> Requests
+    {
+        get { lock (_lock) return _requests.ToList(); }
+    }
+
+    public static FakeIncusServer Start()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"incus-test-{Guid.NewGuid():N}.sock");
+        Socket listener = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        listener.Bind(new UnixDomainSocketEndPoint(path));
+        listener.Listen(16);
+        return new FakeIncusServer(path, listener);
+    }
+
+    private async Task AcceptLoopAsync()
+    {
+        while (!_cts.IsCancellationRequested)
+        {
+            Socket client;
+            try
+            {
+                client = await _listener.AcceptAsync(_cts.Token).ConfigureAwait(false);
+            }
+            catch
+            {
+                return;
+            }
+
+            _ = Task.Run(() => HandleClientAsync(client));
+        }
+    }
+
+    private void Log(string request)
+    {
+        lock (_lock)
+            _requests.Add(request);
+    }
+
+    private async Task HandleClientAsync(Socket client)
+    {
+        try
+        {
+            using NetworkStream stream = new(client, ownsSocket: true);
+
+            (string requestLine, Dictionary<string, string> headers) = await ReadRequestAsync(stream).ConfigureAwait(false);
+            Log(requestLine);
+
+            if (headers.TryGetValue("upgrade", out string? upgrade) &&
+                upgrade.Equals("websocket", StringComparison.OrdinalIgnoreCase))
+            {
+                await HandleWebsocketAsync(stream, headers).ConfigureAwait(false);
+                return;
+            }
+
+            await HandleHttpAsync(stream, requestLine).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Client closed the connection.
+        }
+    }
+
+    private static async Task<(string RequestLine, Dictionary<string, string> Headers)> ReadRequestAsync(Stream stream)
+    {
+        List<byte> buffer = new();
+        byte[] single = new byte[1];
+
+        while (true)
+        {
+            int read = await stream.ReadAsync(single).ConfigureAwait(false);
+            if (read == 0)
+                break;
+
+            buffer.Add(single[0]);
+
+            if (buffer.Count >= 4 && buffer[^4] == (byte)'\r' && buffer[^3] == (byte)'\n' &&
+                buffer[^2] == (byte)'\r' && buffer[^1] == (byte)'\n')
+            {
+                break;
+            }
+        }
+
+        string text = Encoding.ASCII.GetString(buffer.ToArray());
+        string[] lines = text.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+
+        Dictionary<string, string> headers = new(StringComparer.OrdinalIgnoreCase);
+        for (int i = 1; i < lines.Length; i++)
+        {
+            int colon = lines[i].IndexOf(':');
+            if (colon > 0)
+                headers[lines[i][..colon].Trim()] = lines[i][(colon + 1)..].Trim();
+        }
+
+        return (lines[0], headers);
+    }
+
+    private async Task HandleWebsocketAsync(Stream stream, Dictionary<string, string> headers)
+    {
+        string key = headers["sec-websocket-key"];
+        string accept = Convert.ToBase64String(
+            SHA1.HashData(Encoding.ASCII.GetBytes(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
+
+        string response = "HTTP/1.1 101 Switching Protocols\r\n" +
+                          "Upgrade: websocket\r\n" +
+                          "Connection: Upgrade\r\n" +
+                          $"Sec-WebSocket-Accept: {accept}\r\n\r\n";
+
+        byte[] responseBytes = Encoding.ASCII.GetBytes(response);
+        await stream.WriteAsync(responseBytes).ConfigureAwait(false);
+        await stream.FlushAsync().ConfigureAwait(false);
+
+        if (!SuppressOperationEvent)
+        {
+            // Give the client time to POST the operation and register its handler, so the event
+            // arrives deterministically after the handler is installed.
+            await Task.Delay(500).ConfigureAwait(false);
+
+            string evt = JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                ["type"] = "operation",
+                ["timestamp"] = "2026-01-01T00:00:00Z",
+                ["metadata"] = new Dictionary<string, object?>
+                {
+                    ["id"] = _operationId,
+                    ["class"] = "task",
+                    ["status"] = "Success",
+                    ["status_code"] = 200,
+                    ["metadata"] = new Dictionary<string, object?> { ["return"] = 0 },
+                },
+            });
+
+            await SendWebsocketTextAsync(stream, evt).ConfigureAwait(false);
+        }
+
+        // Keep the socket open until the client disconnects.
+        byte[] buffer = new byte[1024];
+        while (await stream.ReadAsync(buffer).ConfigureAwait(false) > 0)
+        {
+        }
+    }
+
+    private async Task HandleHttpAsync(Stream stream, string requestLine)
+    {
+        string[] parts = requestLine.Split(' ');
+        string method = parts[0];
+        string path = parts[1];
+
+        string body;
+        int status;
+
+        if (method == "POST" && path.Contains("/exec"))
+        {
+            body = JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                ["type"] = "async",
+                ["status"] = "Operation created",
+                ["status_code"] = 100,
+                ["metadata"] = new Dictionary<string, object?>
+                {
+                    ["id"] = _operationId,
+                    ["class"] = "task",
+                    ["status"] = "Running",
+                    ["status_code"] = 103,
+                    ["metadata"] = new Dictionary<string, object?>
+                    {
+                        ["output"] = new Dictionary<string, object?>
+                        {
+                            ["1"] = "/1.0/instances/caddy/logs/exec-output/exec_stdout.log",
+                            ["2"] = "/1.0/instances/caddy/logs/exec-output/exec_stderr.log",
+                        },
+                    },
+                },
+            });
+            status = 202;
+        }
+        else if (method == "GET" && path.Contains("/operations/"))
+        {
+            int gets = Interlocked.Increment(ref _operationGets);
+            bool running = OperationStaysRunning || gets <= RunningRepliesBeforeSuccess;
+            string statusName = running ? "Running" : "Success";
+            int statusCode = running ? 103 : 200;
+            body = JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                ["type"] = "sync",
+                ["status"] = statusName,
+                ["status_code"] = statusCode,
+                ["metadata"] = new Dictionary<string, object?>
+                {
+                    ["id"] = _operationId,
+                    ["class"] = "task",
+                    ["status"] = statusName,
+                    ["status_code"] = statusCode,
+                    ["metadata"] = new Dictionary<string, object?>
+                    {
+                        ["return"] = 0,
+                        ["output"] = new Dictionary<string, object?>
+                        {
+                            ["1"] = "/1.0/instances/caddy/logs/exec-output/exec_stdout.log",
+                            ["2"] = "/1.0/instances/caddy/logs/exec-output/exec_stderr.log",
+                        },
+                    },
+                },
+            });
+            status = 200;
+        }
+        else if (method == "GET" && path.Contains("/logs/exec-output/"))
+        {
+            body = "caddy output";
+            status = 200;
+        }
+        else if (method == "DELETE" && path.Contains("/logs/exec-output/"))
+        {
+            body = """{"type":"sync","status":"Success","status_code":200,"metadata":null}""";
+            status = 200;
+        }
+        else if (method == "GET" && path.EndsWith("/1.0"))
+        {
+            body = JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                ["type"] = "sync",
+                ["status"] = "Success",
+                ["status_code"] = 200,
+                ["metadata"] = new Dictionary<string, object?>
+                {
+                    ["api_extensions"] = new[] { "container_exec_recording" },
+                    ["api_status"] = "stable",
+                    ["api_version"] = "1.0",
+                    ["auth"] = "trusted",
+                    ["public"] = false,
+                    ["environment"] = new Dictionary<string, object?>(),
+                },
+            });
+            status = 200;
+        }
+        else
+        {
+            body = """{"type":"error","error":"not found","error_code":404}""";
+            status = 404;
+        }
+
+        byte[] bodyBytes = Encoding.UTF8.GetBytes(body);
+        string headers = $"HTTP/1.1 {status} {(status == 200 ? "OK" : "Status")}\r\n" +
+                         "Content-Type: application/json\r\n" +
+                         $"Content-Length: {bodyBytes.Length}\r\n" +
+                         "Connection: close\r\n\r\n";
+
+        byte[] headerBytes = Encoding.ASCII.GetBytes(headers);
+        await stream.WriteAsync(headerBytes).ConfigureAwait(false);
+        await stream.WriteAsync(bodyBytes).ConfigureAwait(false);
+        await stream.FlushAsync().ConfigureAwait(false);
+    }
+
+    private static async Task SendWebsocketTextAsync(Stream stream, string text)
+    {
+        byte[] payload = Encoding.UTF8.GetBytes(text);
+        using MemoryStream frame = new();
+        frame.WriteByte(0x81); // FIN + text
+
+        if (payload.Length < 126)
+        {
+            frame.WriteByte((byte)payload.Length);
+        }
+        else
+        {
+            frame.WriteByte(126);
+            frame.WriteByte((byte)(payload.Length >> 8));
+            frame.WriteByte((byte)payload.Length);
+        }
+
+        frame.Write(payload);
+        await stream.WriteAsync(frame.ToArray()).ConfigureAwait(false);
+        await stream.FlushAsync().ConfigureAwait(false);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _cts.Cancel();
+        try
+        {
+            _listener.Close();
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            await _loop.ConfigureAwait(false);
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            File.Delete(_socketPath);
+        }
+        catch
+        {
+        }
+
+        _cts.Dispose();
+    }
+}

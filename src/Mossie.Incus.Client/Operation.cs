@@ -183,7 +183,39 @@ public sealed class Operation : IAsyncDisposable
 
             try
             {
-                await completion.Task.ConfigureAwait(false);
+                // Wait for the operation event, polling the operation state as a fallback so
+                // that a missed event (or a dropped event-listener connection) can't hang the
+                // wait indefinitely.
+                while (true)
+                {
+                    try
+                    {
+                        await completion.Task.WaitAsync(TimeSpan.FromSeconds(1), linked.Token).ConfigureAwait(false);
+                        break;
+                    }
+                    catch (TimeoutException)
+                    {
+                        // Fall back to polling the operation state.
+                        try
+                        {
+                            await RefreshAsync(cancellationToken).ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            // Keep waiting for the event; the next poll retries.
+                            continue;
+                        }
+
+                        lock (_lock)
+                        {
+                            if (IncusStatusCode.IsFinal(_operation.StatusCode))
+                            {
+                                completion.TrySetResult(true);
+                                break;
+                            }
+                        }
+                    }
+                }
             }
             catch (OperationCanceledException)
             {

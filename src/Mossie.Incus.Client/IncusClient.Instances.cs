@@ -666,11 +666,7 @@ public sealed partial class IncusClient
                     instanceName, Path.GetFileName(stdoutFile), cancellationToken).ConfigureAwait(false);
 
                 if (args.Stdout is not null)
-                {
                     await reader.CopyToAsync(args.Stdout, cancellationToken).ConfigureAwait(false);
-                    await DeleteInstanceExecOutputLogFileAsync(
-                        instanceName, Path.GetFileName(stdoutFile), cancellationToken).ConfigureAwait(false);
-                }
 
                 await DeleteInstanceExecOutputLogFileAsync(
                     instanceName, Path.GetFileName(stdoutFile), cancellationToken).ConfigureAwait(false);
@@ -682,11 +678,7 @@ public sealed partial class IncusClient
                     instanceName, Path.GetFileName(stderrFile), cancellationToken).ConfigureAwait(false);
 
                 if (args.Stderr is not null)
-                {
                     await reader.CopyToAsync(args.Stderr, cancellationToken).ConfigureAwait(false);
-                    await DeleteInstanceExecOutputLogFileAsync(
-                        instanceName, Path.GetFileName(stderrFile), cancellationToken).ConfigureAwait(false);
-                }
 
                 await DeleteInstanceExecOutputLogFileAsync(
                     instanceName, Path.GetFileName(stderrFile), cancellationToken).ConfigureAwait(false);
