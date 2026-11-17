@@ -80,17 +80,18 @@ internal sealed class FakeIncusServer : IAsyncDisposable
         {
             using NetworkStream stream = new(client, ownsSocket: true);
 
-            (string requestLine, Dictionary<string, string> headers) = await ReadRequestAsync(stream).ConfigureAwait(false);
+            (string requestLine, Dictionary<string, string> headers, string body) =
+                await ReadRequestAsync(stream).ConfigureAwait(false);
             Log(requestLine);
 
             if (headers.TryGetValue("upgrade", out string? upgrade) &&
                 upgrade.Equals("websocket", StringComparison.OrdinalIgnoreCase))
             {
-                await HandleWebsocketAsync(stream, headers).ConfigureAwait(false);
+                await HandleWebsocketAsync(stream, requestLine, headers).ConfigureAwait(false);
                 return;
             }
 
-            await HandleHttpAsync(stream, requestLine).ConfigureAwait(false);
+            await HandleHttpAsync(stream, requestLine, body).ConfigureAwait(false);
         }
         catch
         {
@@ -98,7 +99,7 @@ internal sealed class FakeIncusServer : IAsyncDisposable
         }
     }
 
-    private static async Task<(string RequestLine, Dictionary<string, string> Headers)> ReadRequestAsync(Stream stream)
+    private static async Task<(string RequestLine, Dictionary<string, string> Headers, string Body)> ReadRequestAsync(Stream stream)
     {
         List<byte> buffer = new();
         byte[] single = new byte[1];
@@ -129,10 +130,27 @@ internal sealed class FakeIncusServer : IAsyncDisposable
                 headers[lines[i][..colon].Trim()] = lines[i][(colon + 1)..].Trim();
         }
 
-        return (lines[0], headers);
+        string body = "";
+        if (headers.TryGetValue("content-length", out string? lengthText) && int.TryParse(lengthText, out int length) && length > 0)
+        {
+            byte[] bodyBuffer = new byte[length];
+            int total = 0;
+            while (total < length)
+            {
+                int read = await stream.ReadAsync(bodyBuffer.AsMemory(total, length - total)).ConfigureAwait(false);
+                if (read == 0)
+                    break;
+
+                total += read;
+            }
+
+            body = Encoding.UTF8.GetString(bodyBuffer, 0, total);
+        }
+
+        return (lines[0], headers, body);
     }
 
-    private async Task HandleWebsocketAsync(Stream stream, Dictionary<string, string> headers)
+    private async Task HandleWebsocketAsync(Stream stream, string requestLine, Dictionary<string, string> headers)
     {
         string key = headers["sec-websocket-key"];
         string accept = Convert.ToBase64String(
@@ -147,7 +165,9 @@ internal sealed class FakeIncusServer : IAsyncDisposable
         await stream.WriteAsync(responseBytes).ConfigureAwait(false);
         await stream.FlushAsync().ConfigureAwait(false);
 
-        if (!SuppressOperationEvent)
+        bool isEvents = requestLine.Contains("/events");
+
+        if (isEvents && !SuppressOperationEvent)
         {
             // Give the client time to POST the operation and register its handler, so the event
             // arrives deterministically after the handler is installed.
@@ -170,6 +190,22 @@ internal sealed class FakeIncusServer : IAsyncDisposable
             await SendWebsocketTextAsync(stream, evt).ConfigureAwait(false);
         }
 
+        // Exec data websockets echo the client's frames back (simulating a PTY), so the terminal
+        // mirror can be exercised end to end.
+        if (!isEvents && requestLine.Contains("secret=term"))
+        {
+            while (true)
+            {
+                (byte[]? payload, bool isText) = await ReadWebsocketFrameAsync(stream).ConfigureAwait(false);
+                if (payload is null)
+                    break;
+
+                await SendWebsocketFrameAsync(stream, payload, isText).ConfigureAwait(false);
+            }
+
+            return;
+        }
+
         // Keep the socket open until the client disconnects.
         byte[] buffer = new byte[1024];
         while (await stream.ReadAsync(buffer).ConfigureAwait(false) > 0)
@@ -177,7 +213,79 @@ internal sealed class FakeIncusServer : IAsyncDisposable
         }
     }
 
-    private async Task HandleHttpAsync(Stream stream, string requestLine)
+    private static async Task<(byte[]? Payload, bool IsText)> ReadWebsocketFrameAsync(Stream stream)
+    {
+        byte[] header = new byte[2];
+        if (await stream.ReadAsync(header.AsMemory(0, 2)).ConfigureAwait(false) < 2)
+            return (null, false);
+
+        bool fin = (header[0] & 0x80) != 0;
+        int opcode = header[0] & 0x0F;
+        bool masked = (header[1] & 0x80) != 0;
+        long length = header[1] & 0x7F;
+
+        if (opcode == 0x8) // close
+            return (null, false);
+
+        if (length == 126)
+        {
+            byte[] extended = new byte[2];
+            await stream.ReadExactlyAsync(extended).ConfigureAwait(false);
+            length = (extended[0] << 8) | extended[1];
+        }
+        else if (length == 127)
+        {
+            byte[] extended = new byte[8];
+            await stream.ReadExactlyAsync(extended).ConfigureAwait(false);
+            length = 0;
+            for (int i = 0; i < 8; i++)
+                length = (length << 8) | extended[i];
+        }
+
+        byte[] mask = new byte[4];
+        if (masked)
+            await stream.ReadExactlyAsync(mask).ConfigureAwait(false);
+
+        byte[] payload = new byte[length];
+        await stream.ReadExactlyAsync(payload).ConfigureAwait(false);
+
+        if (masked)
+        {
+            for (int i = 0; i < payload.Length; i++)
+                payload[i] ^= mask[i % 4];
+        }
+
+        return (payload, opcode == 0x1);
+    }
+
+    private static async Task SendWebsocketFrameAsync(Stream stream, byte[] payload, bool isText)
+    {
+        using MemoryStream frame = new();
+        frame.WriteByte((byte)(0x80 | (isText ? 0x1 : 0x2)));
+
+        if (payload.Length < 126)
+        {
+            frame.WriteByte((byte)payload.Length);
+        }
+        else if (payload.Length <= 0xFFFF)
+        {
+            frame.WriteByte(126);
+            frame.WriteByte((byte)(payload.Length >> 8));
+            frame.WriteByte((byte)payload.Length);
+        }
+        else
+        {
+            frame.WriteByte(127);
+            for (int i = 7; i >= 0; i--)
+                frame.WriteByte((byte)((long)payload.Length >> (8 * i)));
+        }
+
+        frame.Write(payload);
+        await stream.WriteAsync(frame.ToArray()).ConfigureAwait(false);
+        await stream.FlushAsync().ConfigureAwait(false);
+    }
+
+    private async Task HandleHttpAsync(Stream stream, string requestLine, string requestBody)
     {
         string[] parts = requestLine.Split(' ');
         string method = parts[0];
@@ -188,28 +296,58 @@ internal sealed class FakeIncusServer : IAsyncDisposable
 
         if (method == "POST" && path.Contains("/exec"))
         {
-            body = JsonSerializer.Serialize(new Dictionary<string, object?>
+            bool interactive = requestBody.Contains("\"interactive\":true", StringComparison.Ordinal);
+            if (interactive)
             {
-                ["type"] = "async",
-                ["status"] = "Operation created",
-                ["status_code"] = 100,
-                ["metadata"] = new Dictionary<string, object?>
+                // Interactive exec exposes a terminal (fd "0") and a control socket.
+                body = JsonSerializer.Serialize(new Dictionary<string, object?>
                 {
-                    ["id"] = _operationId,
-                    ["class"] = "task",
-                    ["status"] = "Running",
-                    ["status_code"] = 103,
+                    ["type"] = "async",
+                    ["status"] = "Operation created",
+                    ["status_code"] = 100,
                     ["metadata"] = new Dictionary<string, object?>
                     {
-                        ["output"] = new Dictionary<string, object?>
+                        ["id"] = _operationId,
+                        ["class"] = "websocket",
+                        ["status"] = "Running",
+                        ["status_code"] = 103,
+                        ["metadata"] = new Dictionary<string, object?>
                         {
-                            ["1"] = "/1.0/instances/caddy/logs/exec-output/exec_stdout.log",
-                            ["2"] = "/1.0/instances/caddy/logs/exec-output/exec_stderr.log",
+                            ["fds"] = new Dictionary<string, object?>
+                            {
+                                ["0"] = "term0",
+                                ["control"] = "ctrl0",
+                            },
                         },
                     },
-                },
-            });
-            status = 202;
+                });
+                status = 202;
+            }
+            else
+            {
+                body = JsonSerializer.Serialize(new Dictionary<string, object?>
+                {
+                    ["type"] = "async",
+                    ["status"] = "Operation created",
+                    ["status_code"] = 100,
+                    ["metadata"] = new Dictionary<string, object?>
+                    {
+                        ["id"] = _operationId,
+                        ["class"] = "task",
+                        ["status"] = "Running",
+                        ["status_code"] = 103,
+                        ["metadata"] = new Dictionary<string, object?>
+                        {
+                            ["output"] = new Dictionary<string, object?>
+                            {
+                                ["1"] = "/1.0/instances/caddy/logs/exec-output/exec_stdout.log",
+                                ["2"] = "/1.0/instances/caddy/logs/exec-output/exec_stderr.log",
+                            },
+                        },
+                    },
+                });
+                status = 202;
+            }
         }
         else if (method == "GET" && path.Contains("/operations/"))
         {

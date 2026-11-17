@@ -691,10 +691,11 @@ public sealed partial class IncusClient
 
         if (exec.Interactive)
         {
+            bool hasTerminal = args.Terminal is not null || (args.Stdin is not null && args.Stdout is not null);
+
             if (fds.TryGetValue("0", out string? interactiveFd)
                 && !string.IsNullOrEmpty(interactiveFd)
-                && args.Stdin is not null
-                && args.Stdout is not null)
+                && hasTerminal)
             {
                 websocketNames.Add("0");
             }
@@ -726,8 +727,13 @@ public sealed partial class IncusClient
                 {
                     try
                     {
-                        Task write = MirrorToWebSocketAsync(terminal, args.Stdin, dataToken);
-                        Task read = MirrorFromWebSocketAsync(terminal, args.Stdout, dataToken);
+                        // Interactive exec uses a single bidirectional PTY. Prefer the explicit
+                        // Terminal stream; fall back to Stdin/Stdout for compatibility.
+                        Stream? input = args.Terminal ?? args.Stdin;
+                        Stream? output = args.Terminal ?? args.Stdout;
+
+                        Task write = MirrorToWebSocketAsync(terminal, input, dataToken);
+                        Task read = MirrorFromWebSocketAsync(terminal, output, dataToken);
 
                         await read.ConfigureAwait(false);
                         await terminal.DisposeAsync().ConfigureAwait(false);

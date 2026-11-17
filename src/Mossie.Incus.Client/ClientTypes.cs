@@ -247,13 +247,20 @@ public sealed class InstanceConsoleLogArgs
 /// <summary>Options passed when executing a command in an instance.</summary>
 public sealed class InstanceExecArgs
 {
-    /// <summary>Standard input.</summary>
+    /// <summary>
+    /// Bidirectional terminal used for interactive exec (a single PTY over one websocket).
+    /// When set it takes precedence over <see cref="Stdin"/> and <see cref="Stdout"/>; the same
+    /// stream is read for input and written for output. Ignored for non-interactive exec.
+    /// </summary>
+    public Stream? Terminal { get; set; }
+
+    /// <summary>Standard input (non-interactive exec, or interactive when <see cref="Terminal"/> is not set).</summary>
     public Stream? Stdin { get; set; }
 
-    /// <summary>Standard output.</summary>
+    /// <summary>Standard output (non-interactive exec, or interactive when <see cref="Terminal"/> is not set).</summary>
     public Stream? Stdout { get; set; }
 
-    /// <summary>Standard error.</summary>
+    /// <summary>Standard error (non-interactive exec only; interactive PTYs merge stderr into stdout).</summary>
     public Stream? Stderr { get; set; }
 
     /// <summary>
