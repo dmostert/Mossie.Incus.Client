@@ -96,7 +96,7 @@ jobs:
         env:
           PACKAGE_VERSION: ${{ steps.version.outputs.version }}
         run: >
-          dotnet pack src/Mossie.Incus.Client/Mossie.Incus.Client.csproj
+          dotnet pack Mossie.Incus.Client.slnx
           --configuration Release
           --no-build
           -p:Version="$PACKAGE_VERSION"

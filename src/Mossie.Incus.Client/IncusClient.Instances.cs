@@ -645,6 +645,13 @@ public sealed partial class IncusClient
         if (exec.User > 0 || exec.Group > 0 || !string.IsNullOrEmpty(exec.Cwd))
             CheckExtension("container_exec_user_group_cwd");
 
+        // Streams need the server to create the exec websockets. RecordOutput is mutually
+        // exclusive with wait-for-websocket (the server rejects the combination).
+        if (exec.RecordOutput)
+            exec.WaitForWS = false;
+        else if (args.Terminal is not null || args.Stdin is not null || args.Stdout is not null || args.Stderr is not null)
+            exec.WaitForWS = true;
+
         string path = IsAgent() ? "/exec" : $"{InstancePath(instanceName)}/exec";
 
         (Operation operation, _) = await QueryOperationAsync(

@@ -60,6 +60,24 @@ await using SimpleStreamsClient images =
 List<Image> available = await images.GetImagesAsync();
 ```
 
+Open an interactive terminal (see `Mossie.Incus.Client.VirtualTerminal`):
+
+```csharp
+using Mossie.Incus.Client.VirtualTerminal;
+
+using IncusTerminalSession session = new(client, "my-container");
+await session.ConnectAsync(columns: 120, rows: 30);
+Terminal.Session = session; // VirtualTerminal WPF/Avalonia TerminalControl
+```
+
+## Terminal integration
+
+The companion package `Mossie.Incus.Client.VirtualTerminal` provides `IncusTerminalSession`, a
+[VirtualTerminal](https://github.com/Rikitav/VirtualTerminal) session that runs an interactive
+exec PTY inside an instance and feeds its output into a VT/ANSI screen buffer. It plugs directly
+into the `VirtualTerminal.WPF` and `VirtualTerminal.Avalonia` `TerminalControl` and targets
+`net10.0`. See its [README](src/Mossie.Incus.Client.VirtualTerminal/README.md).
+
 ## Design notes
 
 * Models from Go `shared/api` live in `Mossie.Incus.Client.Api`. Embedded Go structs are flattened into

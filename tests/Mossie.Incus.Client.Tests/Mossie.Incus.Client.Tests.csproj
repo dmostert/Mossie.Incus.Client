@@ -19,5 +19,6 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Mossie.Incus.Client/Mossie.Incus.Client.csproj" />
+    <ProjectReference Include="../../src/Mossie.Incus.Client.VirtualTerminal/Mossie.Incus.Client.VirtualTerminal.csproj" />
   </ItemGroup>
 </Project>
