@@ -43,7 +43,7 @@ public sealed class IncusTerminalSession : TerminalSession
     private bool _hasPendingResize;
 
     /// <summary>
-    /// Initializes a new terminal session for an Incus instance.
+    /// Initializes a new terminal session for an Incus instance using a fully specified exec request.
     /// </summary>
     /// <param name="client">The connected Incus client.</param>
     /// <param name="instanceName">The instance to open a terminal in.</param>
@@ -55,11 +55,78 @@ public sealed class IncusTerminalSession : TerminalSession
     public IncusTerminalSession(IncusClient client, string instanceName, InstanceExecPost? exec = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
-        _instanceName = string.IsNullOrEmpty(instanceName)
+        _instanceName = ValidateInstanceName(instanceName);
+        _exec = exec ?? new InstanceExecPost { Command = ["/bin/sh"] };
+    }
+
+    /// <summary>
+    /// Initializes a new terminal session that runs the supplied command (for example
+    /// <c>["bash", "-l"]</c>) with optional environment variables.
+    /// </summary>
+    /// <param name="client">The connected Incus client.</param>
+    /// <param name="instanceName">The instance to open a terminal in.</param>
+    /// <param name="command">Command and arguments to run.</param>
+    /// <param name="environment">Environment variables to set for the command.</param>
+    public IncusTerminalSession(
+        IncusClient client,
+        string instanceName,
+        IEnumerable<string> command,
+        IDictionary<string, string>? environment = null)
+        : this(client, instanceName, CreateExec(command, environment))
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new terminal session that runs a single executable (for example
+    /// <c>"bash"</c>) with optional environment variables.
+    /// </summary>
+    /// <param name="client">The connected Incus client.</param>
+    /// <param name="instanceName">The instance to open a terminal in.</param>
+    /// <param name="command">Executable to run.</param>
+    /// <param name="environment">Environment variables to set for the command.</param>
+    public IncusTerminalSession(
+        IncusClient client,
+        string instanceName,
+        string command,
+        IDictionary<string, string>? environment = null)
+        : this(client, instanceName, CreateExec(new[] { command }, environment))
+    {
+    }
+
+    private static InstanceExecPost CreateExec(IEnumerable<string> command, IDictionary<string, string>? environment)
+    {
+        List<string> args = command?.ToList() ?? throw new ArgumentNullException(nameof(command));
+        if (args.Count == 0)
+            throw new ArgumentException("A command is required.", nameof(command));
+
+        return new InstanceExecPost
+        {
+            Command = args,
+            Environment = environment is null || environment.Count == 0
+                ? null
+                : new Dictionary<string, string>(environment),
+        };
+    }
+
+    private static string ValidateInstanceName(string instanceName)
+        => string.IsNullOrEmpty(instanceName)
             ? throw new ArgumentException("Instance name is required.", nameof(instanceName))
             : instanceName;
 
-        _exec = exec ?? new InstanceExecPost { Command = ["/bin/sh"] };
+    /// <summary>
+    /// The exec request used to start the terminal. Mutate it before <see cref="ConnectAsync"/>
+    /// to set the command, environment, user, working directory, and so on.
+    /// </summary>
+    public InstanceExecPost Exec => _exec;
+
+    /// <summary>Sets an environment variable for the command (before <see cref="ConnectAsync"/>).</summary>
+    /// <param name="name">Variable name.</param>
+    /// <param name="value">Variable value.</param>
+    public void SetEnvironmentVariable(string name, string value)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(name);
+        _exec.Environment ??= new Dictionary<string, string>();
+        _exec.Environment[name] = value;
     }
 
     /// <summary>The running exec operation, once connected.</summary>

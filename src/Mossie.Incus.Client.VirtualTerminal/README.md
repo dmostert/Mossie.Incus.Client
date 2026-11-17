@@ -40,15 +40,36 @@ Terminal.Session = session;
 // Terminal.CurrentSession = session;
 ```
 
-For a specific shell or command:
+For a specific shell or command, pass the command (and optional environment):
 
 ```csharp
-using IncusTerminalSession session = new(client, "my-container", new InstanceExecPost
-{
-    Command = ["bash", "-l"],
-    Environment = new Dictionary<string, string> { ["TERM"] = "xterm-256color" },
-});
+// Single executable:
+using IncusTerminalSession bash = new(client, "my-container", "bash");
+
+// Command + arguments + environment variables:
+using IncusTerminalSession login = new(
+    client,
+    "my-container",
+    ["/bin/bash", "-l"],
+    new Dictionary<string, string>
+    {
+        ["TERM"] = "xterm-256color",
+        ["LANG"] = "C.UTF-8",
+    });
 ```
+
+Or configure the session after construction and before `ConnectAsync`:
+
+```csharp
+using IncusTerminalSession session = new(client, "my-container");
+session.Exec.Command = ["/usr/bin/zsh", "-l"];
+session.SetEnvironmentVariable("TERM", "xterm-256color");
+session.SetEnvironmentVariable("EDITOR", "vim");
+await session.ConnectAsync();
+```
+
+The default command is `/bin/sh`. Use `session.Exec` to set any other exec option (user, group,
+working directory, ...).
 
 ## How it works
 

@@ -25,6 +25,9 @@ internal sealed class FakeIncusServer : IAsyncDisposable
     /// <summary>Number of GET /operations/{id} requests to answer with "Running" before "Success".</summary>
     public int RunningRepliesBeforeSuccess { get; set; }
 
+    /// <summary>The JSON body of the most recent exec request.</summary>
+    public string? LastExecBody { get; private set; }
+
     private int _operationGets;
 
     private FakeIncusServer(string socketPath, Socket listener)
@@ -296,6 +299,8 @@ internal sealed class FakeIncusServer : IAsyncDisposable
 
         if (method == "POST" && path.Contains("/exec"))
         {
+            LastExecBody = requestBody;
+
             bool interactive = requestBody.Contains("\"interactive\":true", StringComparison.Ordinal);
             if (interactive)
             {
