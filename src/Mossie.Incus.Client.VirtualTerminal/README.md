@@ -71,6 +71,28 @@ await session.ConnectAsync();
 The default command is `/bin/sh`. Use `session.Exec` to set any other exec option (user, group,
 working directory, ...).
 
+## Console (read-only)
+
+`IncusConsoleSession` attaches to the instance **console device** instead of starting a shell. It is
+read-only by default, which makes it handy for watching boot logs or serial console output:
+
+```csharp
+using IncusConsoleSession console = new(client, "my-container");
+await console.ConnectAsync(columns: 120, rows: 30);
+Terminal.Session = console; // WPF
+```
+
+The console is writable for containers when you opt in:
+
+```csharp
+console.AllowInput = true;              // forward keyboard input to the serial console
+console.Console.Type = "vga";           // VGA console (VMs, output-only)
+console.Console.Force = true;           // force a connection (requires console_force)
+```
+
+`IncusConsoleSession` and `IncusTerminalSession` share the `IncusPtySession` base class, which owns
+the pipe bridge, control channel and resize handling.
+
 ## How it works
 
 ```
@@ -79,17 +101,18 @@ TerminalControl  ──input──▶  IncusTerminalSession  ──▶  Incus ex
       └────screen buffer◀── decoder ◀── instance output ◀─────┘
 ```
 
-* `TerminalSession.Write` (keyboard input) is forwarded to the exec PTY.
+* `TerminalSession.Write` (keyboard input) is forwarded to the exec PTY (or the console when
+  `AllowInput` is set).
 * Instance output is decoded by the VirtualTerminal `TerminalDecoder` into `Buffer`.
 * `Resize` sends a `window-resize` control message so the remote PTY reflows. A resize that
   arrives before the control socket is connected is remembered and applied once it is.
-* Disposing the session stops the exec and closes the PTY.
+* Disposing the session stops the exec/console and closes the PTY.
 
 ## Notes
 
 * The session does **not** own the `IncusClient`; dispose it separately.
-* The terminal requires the instance to be running. For containers the shell must exist in the
-  image (use `/bin/sh` as the portable default).
+* The terminal/console requires the instance to be running. For containers the shell must exist in
+  the image (use `/bin/sh` as the portable default).
 * The `InstanceExecPost.WaitForWS` flag is managed by the client; do not set it.
 
 ## License

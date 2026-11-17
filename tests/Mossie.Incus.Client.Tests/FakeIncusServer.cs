@@ -28,6 +28,9 @@ internal sealed class FakeIncusServer : IAsyncDisposable
     /// <summary>The JSON body of the most recent exec request.</summary>
     public string? LastExecBody { get; private set; }
 
+    /// <summary>The JSON body of the most recent console request.</summary>
+    public string? LastConsoleBody { get; private set; }
+
     private int _operationGets;
 
     private FakeIncusServer(string socketPath, Socket listener)
@@ -209,6 +212,19 @@ internal sealed class FakeIncusServer : IAsyncDisposable
             return;
         }
 
+        // Console websocket: emit some console output so the read-only session can be exercised.
+        if (!isEvents && requestLine.Contains("secret=console"))
+        {
+            await SendWebsocketTextAsync(stream, "console ready\n").ConfigureAwait(false);
+
+            byte[] consoleBuffer = new byte[1024];
+            while (await stream.ReadAsync(consoleBuffer).ConfigureAwait(false) > 0)
+            {
+            }
+
+            return;
+        }
+
         // Keep the socket open until the client disconnects.
         byte[] buffer = new byte[1024];
         while (await stream.ReadAsync(buffer).ConfigureAwait(false) > 0)
@@ -297,7 +313,35 @@ internal sealed class FakeIncusServer : IAsyncDisposable
         string body;
         int status;
 
-        if (method == "POST" && path.Contains("/exec"))
+        if (method == "POST" && path.Contains("/console"))
+        {
+            LastConsoleBody = requestBody;
+
+            // The console exposes a terminal (fd "0") and a control socket.
+            body = JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                ["type"] = "async",
+                ["status"] = "Operation created",
+                ["status_code"] = 100,
+                ["metadata"] = new Dictionary<string, object?>
+                {
+                    ["id"] = _operationId,
+                    ["class"] = "websocket",
+                    ["status"] = "Running",
+                    ["status_code"] = 103,
+                    ["metadata"] = new Dictionary<string, object?>
+                    {
+                        ["fds"] = new Dictionary<string, object?>
+                        {
+                            ["0"] = "console0",
+                            ["control"] = "ctrl0",
+                        },
+                    },
+                },
+            });
+            status = 202;
+        }
+        else if (method == "POST" && path.Contains("/exec"))
         {
             LastExecBody = requestBody;
 
@@ -403,7 +447,7 @@ internal sealed class FakeIncusServer : IAsyncDisposable
                 ["status_code"] = 200,
                 ["metadata"] = new Dictionary<string, object?>
                 {
-                    ["api_extensions"] = new[] { "container_exec_recording" },
+                    ["api_extensions"] = new[] { "container_exec_recording", "console", "console_vga_type", "console_force" },
                     ["api_status"] = "stable",
                     ["api_version"] = "1.0",
                     ["auth"] = "trusted",
